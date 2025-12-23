@@ -1,6 +1,7 @@
 import re
+import logging
 from aiogram import Router, types, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, StateFilter 
 from aiogram.fsm.context import FSMContext
 
 from database.queries import get_user, add_user
@@ -16,8 +17,10 @@ def confirm_kb():
     builder.row(KeyboardButton(text="✅ Все верно"), KeyboardButton(text="❌ Заново"))
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
-@router.message(Command("cancel"))
-@router.message(F.text.lower() == "отмена")
+# --- БЛОК ОТМЕНЫ И СТАРТА ---
+
+@router.message(Command("cancel"), StateFilter("*"))
+@router.message(F.text.lower() == "отмена", StateFilter("*"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("❌ Действие отменено.", reply_markup=main_menu_kb())
@@ -29,9 +32,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await message.answer(f"👋 С возвращением, {user.name}!", reply_markup=main_menu_kb())
     else:
         sent_msg = await message.answer("Добро пожаловать! Введите ваше имя:")
-        # Сохраняем ID сообщения, чтобы потом его удалить (Живой интерфейс)
         await state.update_data(last_msg_id=sent_msg.message_id)
         await state.set_state(Register.name)
+
+# --- БЛОК РЕГИСТРАЦИИ (FSM) ---
 
 @router.message(Register.name)
 async def reg_name(message: types.Message, state: FSMContext):
@@ -39,7 +43,6 @@ async def reg_name(message: types.Message, state: FSMContext):
         return await message.answer("❌ Имя от 2 до 50 символов. Введите снова:")
     
     data = await state.get_data()
-    # Удаляем предыдущий вопрос бота и ответ пользователя для чистоты
     try:
         await message.bot.delete_message(message.chat.id, data['last_msg_id'])
         await message.delete()
@@ -104,3 +107,24 @@ async def reg_final(message: types.Message, state: FSMContext):
 async def reg_restart(message: types.Message, state: FSMContext):
     await state.set_state(Register.name)
     await message.answer("Начнем сначала. Введите имя:")
+
+# --- ОБРАБОТЧИКИ ГЛАВНОГО МЕНЮ ---
+
+# Исправлен синтаксис StateFilter для профиля
+@router.message(F.text == "📄 Мой профиль", StateFilter("*"))
+async def profile_handler(message: types.Message, state: FSMContext):
+    await state.clear()
+    user = await get_user(message.from_user.id)
+    
+    if user:
+        text = (
+            f"👤 **Ваш профиль**\n\n"
+            f"🆔 **ID:** `{user.telegram_id}`\n"
+            f"👤 **Имя:** {user.name}\n"
+            f"👥 **Группа:** {user.group}\n"
+            f"📞 **Телефон:** {user.phone if user.phone else 'не указан'}\n"
+            f"📅 **Дата регистрации:** {user.created_at.strftime('%d.%m.%Y')}"
+        )
+        await message.answer(text, parse_mode="Markdown")
+    else:
+        await message.answer("❌ Профиль не найден. Нажмите /start для регистрации.")
